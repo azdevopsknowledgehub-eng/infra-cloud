@@ -1,0 +1,73 @@
+name: 'Bicep Unit Tests'
+
+# PRs and main only: Azure OIDC federated credentials cannot use branch wildcards.
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+env:
+  LOCATION: "eastus"
+
+# Special permissions required for OIDC authentication
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+jobs:
+  lint-and-scan:
+    name: 'Lint and security scan'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Bicep Lint
+      uses: Azure/cli@v1
+      with:
+        inlineScript: az bicep build --file main.bicep
+
+    - name: Run Checkov action
+      id: checkov
+      uses: bridgecrewio/checkov-action@master
+      with:
+        framework: bicep
+
+    - name: Upload SARIF file
+      if: success() || failure()
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: results.sarif
+        category: checkov
+
+  # Validate against dev only so PR checks do not wait on staging/production approvals.
+  # Uses GitHub Environment "dev" so the OIDC subject is repo:ORG/REPO:environment:dev
+  validate-dev:
+    name: 'Validate (dev)'
+    runs-on: ubuntu-latest
+    environment: dev
+    # validate also checks whether this identity may create the resources
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: 'Az CLI login'
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Bicep Validate
+      uses: Azure/cli@v1
+      with:
+        inlineScript: |
+          az deployment sub validate \
+            --name validate-dev-${{ github.run_id }} \
+            --template-file main.bicep \
+            --parameters params/dev.bicepparam \
+            --location $LOCATION
