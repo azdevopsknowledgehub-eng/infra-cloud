@@ -51,11 +51,10 @@ jobs:
         sarif_file: results.sarif
         category: checkov
 
-  # PRs: validate + what-if against dev only so reviewers are not blocked by prod approvals.
+  # Validate + what-if against dev on every run (PR, push to main, manual).
   # OIDC subject: repo:ORG/REPO:environment:dev
   preview-dev:
     name: 'Validate and what-if (dev)'
-    if: github.event_name == 'pull_request'
     needs: [lint-and-scan]
     runs-on: ubuntu-latest
     environment: dev
@@ -113,6 +112,7 @@ jobs:
         echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
 
     - name: Push Whatif Output to PR
+      if: github.event_name == 'pull_request'
       uses: actions/github-script@v6
       env:
         SUMMARY: "${{ steps.whatif-string.outputs.summary }}"
@@ -131,7 +131,7 @@ jobs:
   plan-deploy:
     name: 'Plan deploy targets'
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [lint-and-scan]
+    needs: [lint-and-scan, preview-dev]
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
