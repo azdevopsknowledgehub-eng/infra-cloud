@@ -127,29 +127,42 @@ jobs:
                 body: body
             })
 
+  # Job-level if cannot use matrix, so choose targets here first.
+  plan-deploy:
+    name: 'Plan deploy targets'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [lint-and-scan]
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - id: set-matrix
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        TARGET_ENV: ${{ github.event.inputs.environment }}
+      run: |
+        if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          PARAM="params/${TARGET_ENV}.bicepparam"
+          if [ "$TARGET_ENV" = "production" ]; then
+            PARAM="params/prod.bicepparam"
+          fi
+          echo "matrix={\"include\":[{\"environment\":\"${TARGET_ENV}\",\"params\":\"${PARAM}\"}]}" >> "$GITHUB_OUTPUT"
+        else
+          echo 'matrix={"include":[{"environment":"dev","params":"params/dev.bicepparam"},{"environment":"staging","params":"params/staging.bicepparam"},{"environment":"production","params":"params/prod.bicepparam"}]}' >> "$GITHUB_OUTPUT"
+        fi
+
   # On merge to main: deploy dev, then staging, then production (one at a time).
   # Manual run can target a single environment.
   # OIDC subject: repo:ORG/REPO:environment:<name>
   deploy:
     name: 'Deploy ${{ matrix.environment }}'
-    if: >
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.event.inputs.environment == matrix.environment)
-    needs: [lint-and-scan]
+    needs: [plan-deploy]
     runs-on: ubuntu-latest
     environment: ${{ matrix.environment }}
     strategy:
       fail-fast: true
       max-parallel: 1
-      matrix:
-        include:
-          - environment: dev
-            params: params/dev.bicepparam
-          - environment: staging
-            params: params/staging.bicepparam
-          - environment: production
-            params: params/prod.bicepparam
+      matrix: ${{ fromJson(needs.plan-deploy.outputs.matrix) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v3
